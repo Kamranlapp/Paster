@@ -28,16 +28,16 @@ enum PostEventPermissionRequestState: Equatable {
 
 @MainActor
 struct PostEventPermissionClient {
-    let isTrusted: () -> Bool
+    let preflight: () -> Bool
     let request: () -> Bool
 
     static let live = PostEventPermissionClient(
-        isTrusted: {
-            let options = [
-                "AXTrustedCheckOptionPrompt": false,
-            ] as CFDictionary
-            return AXIsProcessTrustedWithOptions(options)
-        },
+        // System Settings exposes the approval as an Accessibility toggle.
+        // AX trust reflects that toggle reliably, including after the user
+        // grants access while the app is already running. In contrast,
+        // CGPreflightPostEventAccess can remain false for a sandboxed app even
+        // though the visible Accessibility entry is enabled.
+        preflight: { AXIsProcessTrusted() },
         request: { CGRequestPostEventAccess() }
     )
 }
@@ -88,6 +88,10 @@ enum PasteAutomationResult: Equatable {
 
 @MainActor
 final class PasteAutomationController: ObservableObject {
+    private enum DefaultsKey {
+        static let assistivePasteEnabled = "accessibility.assistivePasteEnabled"
+    }
+
     struct TargetApplication {
         let processIdentifier: pid_t
         let bundleIdentifier: String?
@@ -97,12 +101,14 @@ final class PasteAutomationController: ObservableObject {
 
     @Published private(set) var permissionState: PostEventPermissionState
     @Published private(set) var permissionRequestState: PostEventPermissionRequestState = .idle
+    @Published private(set) var isAssistivePasteEnabled: Bool
 
     var isPostEventAuthorized: Bool {
         permissionState == .granted
     }
 
     private let permissionClient: PostEventPermissionClient
+    private let userDefaults: UserDefaults?
     private let frontmostApplication: () -> TargetApplication?
     private let isApplicationFrontmost: (pid_t) -> Bool
     private let postCommandV: () -> Bool
@@ -119,6 +125,7 @@ final class PasteAutomationController: ObservableObject {
 
     init(
         permissionClient: PostEventPermissionClient = .live,
+        userDefaults: UserDefaults? = nil,
         frontmostApplication: @escaping () -> TargetApplication? = {
             guard let application = NSWorkspace.shared.frontmostApplication else {
                 return nil
@@ -151,6 +158,15 @@ final class PasteAutomationController: ObservableObject {
         settingsRefreshInterval: TimeInterval = 1
     ) {
         self.permissionClient = permissionClient
+        self.userDefaults = userDefaults
+        if let userDefaults,
+           userDefaults.object(forKey: DefaultsKey.assistivePasteEnabled) != nil {
+            isAssistivePasteEnabled = userDefaults.bool(
+                forKey: DefaultsKey.assistivePasteEnabled
+            )
+        } else {
+            isAssistivePasteEnabled = true
+        }
         self.frontmostApplication = frontmostApplication
         self.isApplicationFrontmost = isApplicationFrontmost
         self.postCommandV = postCommandV
@@ -159,7 +175,7 @@ final class PasteAutomationController: ObservableObject {
         self.backgroundRefreshInterval = backgroundRefreshInterval
         self.settingsRefreshInterval = settingsRefreshInterval
         authorizationRefreshInterval = backgroundRefreshInterval
-        permissionState = PostEventPermissionState(isGranted: permissionClient.isTrusted())
+        permissionState = PostEventPermissionState(isGranted: permissionClient.preflight())
         applicationDidBecomeActiveCancellable = NotificationCenter.default
             .publisher(for: NSApplication.didBecomeActiveNotification)
             .sink { [weak self] _ in
@@ -182,12 +198,12 @@ final class PasteAutomationController: ObservableObject {
     }
 
     func refreshAuthorization() {
-        applyAuthorization(isGranted: permissionClient.isTrusted())
+        applyAuthorization(isGranted: permissionClient.preflight())
     }
 
     @discardableResult
     func refreshAuthorizationNow() async -> Bool {
-        let isGranted = permissionClient.isTrusted()
+        let isGranted = permissionClient.preflight()
         applyAuthorization(isGranted: isGranted)
         return isGranted
     }
@@ -197,6 +213,11 @@ final class PasteAutomationController: ObservableObject {
         if isGranted {
             permissionRequestState = .idle
         }
+    }
+
+    func setAssistivePasteEnabled(_ isEnabled: Bool) {
+        isAssistivePasteEnabled = isEnabled
+        userDefaults?.set(isEnabled, forKey: DefaultsKey.assistivePasteEnabled)
     }
 
     func setSettingsVisible(_ isVisible: Bool) {
@@ -249,11 +270,9 @@ final class PasteAutomationController: ObservableObject {
 
         permissionRequestState = .requesting
         _ = permissionClient.request()
-        // Pastebot requests PostEvent access and immediately opens the exact
-        // Accessibility pane. Trust is authoritative and is polled while the
+        // PostEvent preflight is authoritative and is polled while the
         // permission UI is visible; the request's return value is not treated
         // as the final TCC state.
-        openPostEventSettings()
         let isGranted = await refreshAuthorizationNow()
         if !isGranted {
             permissionRequestState = .awaitingSystemApproval
@@ -266,6 +285,9 @@ final class PasteAutomationController: ObservableObject {
     }
 
     func pasteIntoPreviousApplication() async -> PasteAutomationResult {
+        guard isAssistivePasteEnabled else {
+            return .copiedForManualPaste
+        }
         guard
             let application = previousApplication,
             !application.isTerminated(),

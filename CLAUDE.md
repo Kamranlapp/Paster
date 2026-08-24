@@ -33,7 +33,7 @@ Scripts/package-dmg.sh /path/to/Release/PasteList.app
 
 ### Accessibility / Apple Events permissions during development
 
-Debug builds use the app name `PasteDebug` and bundle identifier `com.kam.pastelist.debug`, keeping their TCC record, app data, and reset commands isolated from the Release/TestFlight identifier `com.kam.pastelist`. After switching from an older Debug build, reset the stale permission once with `tccutil reset Accessibility com.kam.pastelist.debug`, then grant PasteDebug access from the first onboarding page.
+Debug builds use the app name `PasteDebug` and bundle identifier `com.kam.pastelist.debug`, keeping their TCC record, app data, and reset commands isolated from the Release/TestFlight identifier `com.kam.pastelist`. macOS retains permission decisions after uninstall, so after switching from an older Debug build reset both stale automatic-paste records with `tccutil reset Accessibility com.kam.pastelist.debug` and `tccutil reset PostEvent com.kam.pastelist.debug`, then grant PasteDebug access from the first onboarding page.
 
 `SMAppService.mainApp` (Launch at Login) only registers reliably when the app runs from a stable path such as `/Applications/PasteList.app` — registration from Xcode's DerivedData is unreliable.
 
@@ -69,7 +69,7 @@ The only SwiftUI `Scene` is a hidden `Settings {}` scene used to host preference
 
 ### Paste-back automation
 
-Restoring a clip copies it to the pasteboard, then `PasteAutomationController` tries to paste it into the app that was frontmost before the panel opened. Permission state comes from `AXIsProcessTrustedWithOptions` with prompting disabled; only an explicit onboarding, Settings, or contextual permission action calls `CGRequestPostEventAccess` and opens System Settings. Authorized paste posts an explicit Command-down, V-down/up, Command-up sequence at the HID event tap. If permission is missing, the clip remains copied and a dedicated permission panel is shown; focus or posting failures fall back to a manual ⌘V instruction. Permission UI polls once per second and normal background polling remains infrequent.
+Restoring a clip copies it to the pasteboard, then the optional, default-enabled Assistive Paste feature lets people complete the workflow using only a pointing device by pasting into the app that was frontmost before the panel opened. Permission state comes from `AXIsProcessTrusted`, matching the toggle shown in System Settings; only an explicit onboarding, Settings, or contextual permission action calls `CGRequestPostEventAccess`, and System Settings opens only when the user chooses that action in the macOS permission dialog. The app does not use Accessibility elements, inspect another app's UI, or read keyboard input. Authorized paste posts an explicit Command-down, V-down/up, Command-up sequence at the HID event tap. If Assistive Paste is disabled or permission is missing, the clip remains copied for manual paste. Permission UI polls once per second and normal background polling remains infrequent.
 
 ### Global hotkey
 

@@ -12,6 +12,42 @@ protocol LaunchAtLoginServicing: AnyObject {
 
 extension SMAppService: LaunchAtLoginServicing {}
 
+enum LaunchAtLoginResetCommandResult: Equatable {
+    case notRequested
+    case succeeded
+    case failed(String)
+}
+
+@MainActor
+enum LaunchAtLoginResetCommand {
+    nonisolated static let argument = "--unregister-launch-at-login-for-reset"
+
+    static func run(
+        arguments: [String],
+        service: any LaunchAtLoginServicing = SMAppService.mainApp
+    ) -> LaunchAtLoginResetCommandResult {
+        guard arguments.contains(argument) else {
+            return .notRequested
+        }
+
+        switch service.status {
+        case .notRegistered, .notFound:
+            return .succeeded
+        case .enabled, .requiresApproval:
+            break
+        @unknown default:
+            break
+        }
+
+        do {
+            try service.unregister()
+            return .succeeded
+        } catch {
+            return .failed(error.localizedDescription)
+        }
+    }
+}
+
 @MainActor
 final class LaunchAtLoginController: ObservableObject {
     @Published private(set) var isEnabled = false

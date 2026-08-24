@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import ServiceManagement
 import SwiftUI
 
@@ -31,12 +32,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var onboardingWindowController: OnboardingWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
-
         // Hosted unit tests create isolated databases explicitly.
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else {
             return
         }
+
+        switch LaunchAtLoginResetCommand.run(
+            arguments: ProcessInfo.processInfo.arguments
+        ) {
+        case .notRequested:
+            break
+        case .succeeded:
+            Darwin.exit(EXIT_SUCCESS)
+        case .failed(let message):
+            let output = "PasteList could not unregister Launch at Login: \(message)\n"
+            FileHandle.standardError.write(Data(output.utf8))
+            Darwin.exit(EXIT_FAILURE)
+        }
+
+        NSApp.setActivationPolicy(.accessory)
 
         #if DEBUG
         let debugResetAction = DebugResetRelaunchAction(
@@ -61,7 +75,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 blobStorage: blobStorage
             )
             let monitor = PasteboardMonitor(processor: processor)
-            let pasteAutomationController = PasteAutomationController()
+            let pasteAutomationController = PasteAutomationController(
+                userDefaults: .standard
+            )
             let launchAtLoginController = LaunchAtLoginController()
             launchAtLoginController.performInitialSetupIfNeeded()
             let retentionScheduler = RetentionScheduler(

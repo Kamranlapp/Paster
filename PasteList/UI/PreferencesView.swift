@@ -40,13 +40,25 @@ struct PreferencesView: View {
                 }
             }
 
-            preferenceSection(.automaticPaste) {
-                Section("Automatic Paste") {
+            preferenceSection(.accessibility) {
+                Section("Accessibility") {
+                    Toggle(
+                        "Assistive Paste",
+                        isOn: Binding(
+                            get: { pasteAutomationController.isAssistivePasteEnabled },
+                            set: { pasteAutomationController.setAssistivePasteEnabled($0) }
+                        )
+                    )
+
+                    Text("Enables a complete mouse-only paste workflow for people who have difficulty using a physical keyboard.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
                     HStack {
                         Label(
                             pasteAutomationController.isPostEventAuthorized
-                                ? "Automatic paste permission granted"
-                                : "Automatic paste permission not granted",
+                                ? "Assistive Paste permission granted"
+                                : "Assistive Paste permission not granted",
                             systemImage: pasteAutomationController.isPostEventAuthorized
                                 ? "checkmark.circle.fill"
                                 : "exclamationmark.triangle.fill"
@@ -57,8 +69,9 @@ struct PreferencesView: View {
                         Spacer()
                     }
 
-                    if !pasteAutomationController.isPostEventAuthorized {
-                        Button("Open System Settings") {
+                    if pasteAutomationController.isAssistivePasteEnabled,
+                       !pasteAutomationController.isPostEventAuthorized {
+                        Button("Enable Assistive Paste…") {
                             Task {
                                 await pasteAutomationController.requestAuthorization()
                             }
@@ -69,7 +82,7 @@ struct PreferencesView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    Text("\(AppConfiguration.name) only sends ⌘V after you select an item. Without permission, the item stays copied and you can press ⌘V yourself.")
+                    Text("PasteList never reads or monitors keyboard input or another app’s interface. After you select a clip, Assistive Paste sends only ⌘V. Without permission, the item stays copied for manual paste.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -159,7 +172,7 @@ struct PreferencesView: View {
 
 private enum PreferencesSection: Int, CaseIterable, Hashable {
     case globalShortcut
-    case automaticPaste
+    case accessibility
     case historyRetention
     case startup
     case help

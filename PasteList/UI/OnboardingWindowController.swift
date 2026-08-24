@@ -71,7 +71,7 @@ private struct OnboardingView: View {
             Group {
                 switch page {
                 case 0:
-                    accessibilityPage
+                    assistivePastePage
                 default:
                     shortcutPage
                 }
@@ -132,21 +132,27 @@ private struct OnboardingView: View {
         }
     }
 
-    private var accessibilityPage: some View {
+    private var assistivePastePage: some View {
         VStack(spacing: 22) {
             Image(systemName: pasteAutomationController.isPostEventAuthorized
                 ? "checkmark.circle.fill"
                 : "accessibility")
                 .font(.system(size: 64, weight: .medium))
                 .foregroundStyle(pasteAutomationController.isPostEventAuthorized ? Color.green : Color.accentColor)
-            Text("Let \(AppConfiguration.name) paste for you")
+            Text("Assistive Paste")
                 .font(.system(size: 30, weight: .semibold))
 
+            Text("Paste with only a mouse, trackpad, head pointer, or another pointing device — no physical keyboard action required.")
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 480)
+
             if pasteAutomationController.isPostEventAuthorized {
-                Label("Automatic paste permission granted", systemImage: "checkmark.circle.fill")
+                Label("Assistive Paste permission granted", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
             } else {
-                Button("Open System Settings") {
+                Button("Enable Assistive Paste…") {
                     Task {
                         await pasteAutomationController.requestAuthorization()
                     }
@@ -159,7 +165,7 @@ private struct OnboardingView: View {
                     .multilineTextAlignment(.center)
             }
 
-            Text("You can skip this and paste manually with ⌘V.")
+            Text("Optional and enabled by default. You can skip permission access and paste manually with ⌘V.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }

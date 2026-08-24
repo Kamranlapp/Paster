@@ -42,9 +42,9 @@
       </section>
 
       <section class="content-section">
-        <h2>Automatic Paste permission</h2>
-        <p>Automatic Paste is optional. If you enable it, PasteList uses the macOS PostEvent permission to activate the previous application and send only the ⌘V keyboard shortcut after you select an item.</p>
-        <p>PasteList does not use the Accessibility UI API to inspect, read, or modify another application’s interface. Without this permission, PasteList restores the selected item to the clipboard and asks you to press ⌘V manually.</p>
+        <h2>Assistive Paste permission</h2>
+        <p>Assistive Paste is an optional accessibility feature, enabled by default, that supports a complete mouse-only workflow for people who have difficulty using a physical keyboard. With permission, PasteList activates the previous application and sends only ⌘V after you select an item.</p>
+        <p>PasteList uses the dedicated macOS PostEvent APIs. It does not monitor keyboard input or use Accessibility elements to inspect, read, or modify another application’s interface. Without permission, PasteList restores the selected item to the clipboard for manual paste.</p>
       </section>
 
       <section class="content-section">

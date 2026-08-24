@@ -1,7 +1,5 @@
 import Foundation
 
-import Foundation
-
 enum AppConfiguration {
     #if DEBUG
     static let name = "PasteDebug"
@@ -28,6 +26,8 @@ enum DebugResetRelaunchAction: String, CaseIterable {
 }
 
 enum DebugAccessibilityResetScript {
+    static let services = ["Accessibility", "PostEvent"]
+
     static func contents(
         bundleIdentifier: String,
         appPath: String,
@@ -47,21 +47,21 @@ enum DebugAccessibilityResetScript {
         }
         trap cleanup EXIT
 
-        echo "Resetting Accessibility for \(bundleIdentifier)…"
-        if /usr/bin/tccutil reset Accessibility \(quotedBundleIdentifier); then
-            echo "Accessibility reset succeeded. Relaunching PasteDebug…"
+        echo "Resetting automatic-paste authorization for \(bundleIdentifier)…"
+        reset_failed=0
+        \(services.map { "/usr/bin/tccutil reset \($0) \(quotedBundleIdentifier) || reset_failed=$?" }.joined(separator: "\n"))
+        if ((reset_failed == 0)); then
+            echo "Authorization reset succeeded. Relaunching PasteDebug…"
             /bin/sleep 1
             /usr/bin/open \(quotedAppPath) --args \(quotedRelaunchArgument)
             exit 0
-        else
-            status=$?
         fi
 
-        echo "Accessibility reset failed with status $status. No app data was removed."
+        echo "Authorization reset failed with status $reset_failed. No app data was removed."
         /usr/bin/open \(quotedAppPath)
         echo "Press Return to close."
         read -r _
-        exit "$status"
+        exit "$reset_failed"
         """
     }
 

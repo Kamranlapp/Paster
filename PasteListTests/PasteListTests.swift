@@ -7,7 +7,7 @@ import XCTest
 
 final class PasteListTests: XCTestCase {
     @MainActor
-    func testAccessibilityResetHelperTargetsOnlyDebugAccessibilityAndDefersLocalReset() {
+    func testAccessibilityResetHelperTargetsOnlyDebugAssistivePasteServicesAndDefersLocalReset() {
         let script = DebugAccessibilityResetScript.contents(
             bundleIdentifier: "com.kam.pastelist.debug",
             appPath: "/Applications/PasteDebug.app",
@@ -15,9 +15,56 @@ final class PasteListTests: XCTestCase {
         )
 
         XCTAssertTrue(script.contains("tccutil reset Accessibility 'com.kam.pastelist.debug'"))
+        XCTAssertTrue(script.contains("tccutil reset PostEvent 'com.kam.pastelist.debug'"))
+        XCTAssertFalse(script.contains("tccutil reset ListenEvent"))
         XCTAssertTrue(script.contains("'/Applications/PasteDebug.app' --args '--complete-accessibility-reset'"))
         XCTAssertFalse(script.contains("reset All"))
         XCTAssertFalse(script.contains("Application Support"))
+    }
+
+    func testExternalCleanResetScriptsAreNarrowAndExposeBothModes() throws {
+        let projectRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let scriptsRoot = projectRoot.appendingPathComponent("Scripts", isDirectory: true)
+        let resetScriptURL = scriptsRoot.appendingPathComponent("reset-clean-install.sh")
+        let fullLauncherURL = scriptsRoot.appendingPathComponent(
+            "Reset PasteList - Full.command"
+        )
+        let dataOnlyLauncherURL = scriptsRoot.appendingPathComponent(
+            "Reset PasteList - Data Only.command"
+        )
+        let resetScript = try String(contentsOf: resetScriptURL, encoding: .utf8)
+        let fullLauncher = try String(contentsOf: fullLauncherURL, encoding: .utf8)
+        let dataOnlyLauncher = try String(contentsOf: dataOnlyLauncherURL, encoding: .utf8)
+
+        XCTAssertTrue(resetScript.contains("com.kam.pastelist"))
+        XCTAssertTrue(resetScript.contains("com.kam.pastelist.debug"))
+        XCTAssertTrue(resetScript.contains("tccutil reset \"$service\" \"$bundle_identifier\""))
+        XCTAssertTrue(resetScript.contains("Accessibility PostEvent"))
+        XCTAssertTrue(resetScript.contains(LaunchAtLoginResetCommand.argument))
+        XCTAssertTrue(
+            resetScript.contains(
+                "Data/Library/Preferences/$bundle_identifier"
+            )
+        )
+        XCTAssertFalse(resetScript.contains("tccutil reset All"))
+        XCTAssertFalse(resetScript.contains("ListenEvent"))
+        XCTAssertFalse(resetScript.contains("sfltool"))
+        XCTAssertFalse(resetScript.contains("sudo"))
+        XCTAssertFalse(resetScript.contains("Continue? [y/N]"))
+        XCTAssertTrue(fullLauncher.contains("--mode full"))
+        XCTAssertTrue(dataOnlyLauncher.contains("--mode data-only"))
+
+        for launcherURL in [fullLauncherURL, dataOnlyLauncherURL] {
+            let attributes = try FileManager.default.attributesOfItem(
+                atPath: launcherURL.path
+            )
+            let permissions = try XCTUnwrap(
+                (attributes[.posixPermissions] as? NSNumber)?.intValue
+            )
+            XCTAssertNotEqual(permissions & 0o111, 0)
+        }
     }
 
     func testQuickPasteShortcutsAssignOneThroughNineThenZero() {
@@ -210,7 +257,7 @@ final class PasteListTests: XCTestCase {
         var isGranted = false
         let controller = PasteAutomationController(
             permissionClient: PostEventPermissionClient(
-                isTrusted: {
+                preflight: {
                     trustCheckCount += 1
                     return isGranted
                 },
@@ -243,12 +290,12 @@ final class PasteListTests: XCTestCase {
     }
 
     @MainActor
-    func testDeniedDirectRequestOpensSettingsAndWaitsForApproval() async {
+    func testDeniedDirectRequestWaitsForApprovalWithoutOpeningSettings() async {
         var requestCount = 0
         var settingsOpenCount = 0
         let controller = PasteAutomationController(
             permissionClient: PostEventPermissionClient(
-                isTrusted: { false },
+                preflight: { false },
                 request: {
                     requestCount += 1
                     return false
@@ -264,18 +311,18 @@ final class PasteListTests: XCTestCase {
         let wasGranted = await controller.requestAuthorization()
         XCTAssertFalse(wasGranted)
         XCTAssertEqual(requestCount, 1)
-        XCTAssertEqual(settingsOpenCount, 1)
+        XCTAssertEqual(settingsOpenCount, 0)
         XCTAssertEqual(controller.permissionState, .notGranted)
         XCTAssertEqual(controller.permissionRequestState, .awaitingSystemApproval)
     }
 
     @MainActor
-    func testPermissionRequestCanReopenSystemSettingsWhileStillDenied() async {
+    func testPermissionRequestDoesNotOpenSystemSettingsWhileStillDenied() async {
         var requestCount = 0
         var settingsOpenCount = 0
         let controller = PasteAutomationController(
             permissionClient: PostEventPermissionClient(
-                isTrusted: { false },
+                preflight: { false },
                 request: {
                     requestCount += 1
                     return false
@@ -291,13 +338,13 @@ final class PasteListTests: XCTestCase {
         let firstResult = await controller.requestAuthorization()
         XCTAssertFalse(firstResult)
         XCTAssertEqual(requestCount, 1)
-        XCTAssertEqual(settingsOpenCount, 1)
+        XCTAssertEqual(settingsOpenCount, 0)
         XCTAssertEqual(controller.permissionRequestState, .awaitingSystemApproval)
 
         let secondResult = await controller.requestAuthorization()
         XCTAssertFalse(secondResult)
         XCTAssertEqual(requestCount, 2)
-        XCTAssertEqual(settingsOpenCount, 2)
+        XCTAssertEqual(settingsOpenCount, 0)
         XCTAssertEqual(controller.permissionRequestState, .awaitingSystemApproval)
     }
 
@@ -306,7 +353,7 @@ final class PasteListTests: XCTestCase {
         var isGranted = false
         let controller = PasteAutomationController(
             permissionClient: PostEventPermissionClient(
-                isTrusted: { isGranted },
+                preflight: { isGranted },
                 request: { false }
             ),
             frontmostApplication: { nil },
@@ -328,11 +375,11 @@ final class PasteListTests: XCTestCase {
     }
 
     @MainActor
-    func testAXTrustIsAuthoritativeAfterRequestAndRevocation() async {
+    func testPostEventPreflightIsAuthoritativeAfterRequestAndRevocation() async {
         var isTrusted = false
         let controller = PasteAutomationController(
             permissionClient: PostEventPermissionClient(
-                isTrusted: { isTrusted },
+                preflight: { isTrusted },
                 request: {
                     isTrusted = true
                     return true
@@ -360,7 +407,7 @@ final class PasteListTests: XCTestCase {
         var isGranted = false
         let controller = PasteAutomationController(
             permissionClient: PostEventPermissionClient(
-                isTrusted: { isGranted },
+                preflight: { isGranted },
                 request: { false }
             ),
             frontmostApplication: { nil },
@@ -401,7 +448,7 @@ final class PasteListTests: XCTestCase {
     func testClosingOnePermissionSurfaceKeepsFastRefreshForAnother() {
         let controller = PasteAutomationController(
             permissionClient: PostEventPermissionClient(
-                isTrusted: { false },
+                preflight: { false },
                 request: { false }
             ),
             frontmostApplication: { nil },
@@ -455,7 +502,7 @@ final class PasteListTests: XCTestCase {
     }
 
     @MainActor
-    func testAutomaticPasteActivatesPreviousApplicationAndPostsCommandV() async {
+    func testAssistivePasteIsEnabledByDefaultAndPostsCommandV() async {
         var activationCount = 0
         var postCount = 0
         let target = PasteAutomationController.TargetApplication(
@@ -469,7 +516,7 @@ final class PasteListTests: XCTestCase {
         )
         let controller = PasteAutomationController(
             permissionClient: PostEventPermissionClient(
-                isTrusted: { true },
+                preflight: { true },
                 request: { XCTFail("Permission request must be explicit"); return false }
             ),
             frontmostApplication: { target },
@@ -491,7 +538,62 @@ final class PasteListTests: XCTestCase {
     }
 
     @MainActor
-    func testAutomaticPasteReturnsPermissionRequiredBeforeActivatingTarget() async {
+    func testAssistivePasteCanBeDisabledAndPersistsItsSetting() async throws {
+        let suiteName = "PasteListTests.assistivePaste.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        var activationCount = 0
+        var postCount = 0
+        let target = PasteAutomationController.TargetApplication(
+            processIdentifier: 42_428,
+            bundleIdentifier: "com.example.target",
+            isTerminated: { false },
+            activate: {
+                activationCount += 1
+                return true
+            }
+        )
+        let controller = PasteAutomationController(
+            permissionClient: PostEventPermissionClient(
+                preflight: { true },
+                request: { false }
+            ),
+            userDefaults: defaults,
+            frontmostApplication: { target },
+            isApplicationFrontmost: { _ in true },
+            postCommandV: {
+                postCount += 1
+                return true
+            },
+            waitBeforePosting: {},
+            openSystemSettings: {}
+        )
+        XCTAssertTrue(controller.isAssistivePasteEnabled)
+
+        controller.setAssistivePasteEnabled(false)
+        controller.rememberFrontmostApplication()
+        let result = await controller.pasteIntoPreviousApplication()
+
+        XCTAssertEqual(result, .copiedForManualPaste)
+        XCTAssertEqual(activationCount, 0)
+        XCTAssertEqual(postCount, 0)
+        let reloadedController = PasteAutomationController(
+            permissionClient: PostEventPermissionClient(
+                preflight: { false },
+                request: { false }
+            ),
+            userDefaults: defaults,
+            frontmostApplication: { nil },
+            isApplicationFrontmost: { _ in false },
+            postCommandV: { false },
+            waitBeforePosting: {},
+            openSystemSettings: {}
+        )
+        XCTAssertFalse(reloadedController.isAssistivePasteEnabled)
+    }
+
+    @MainActor
+    func testAssistivePasteReturnsPermissionRequiredBeforeActivatingTarget() async {
         var activationCount = 0
         var postCount = 0
         let target = PasteAutomationController.TargetApplication(
@@ -505,7 +607,7 @@ final class PasteListTests: XCTestCase {
         )
         let controller = PasteAutomationController(
             permissionClient: PostEventPermissionClient(
-                isTrusted: { false },
+                preflight: { false },
                 request: { XCTFail("Paste must not request permission implicitly"); return false }
             ),
             frontmostApplication: { target },
@@ -527,7 +629,7 @@ final class PasteListTests: XCTestCase {
     }
 
     @MainActor
-    func testAutomaticPasteFallsBackWithoutPermissionAndPreservesClipboard() async {
+    func testAssistivePasteFallsBackWithoutPermissionAndPreservesClipboard() async {
         let pasteboard = NSPasteboard.withUniqueName()
         pasteboard.clearContents()
         pasteboard.setString("fallback payload", forType: .string)
@@ -545,7 +647,7 @@ final class PasteListTests: XCTestCase {
         )
         let controller = PasteAutomationController(
             permissionClient: PostEventPermissionClient(
-                isTrusted: { false },
+                preflight: { false },
                 request: {
                     requestCount += 1
                     return false
@@ -572,7 +674,7 @@ final class PasteListTests: XCTestCase {
     }
 
     @MainActor
-    func testAutomaticPasteFallsBackWhenPreviousApplicationCannotActivate() async {
+    func testAssistivePasteFallsBackWhenPreviousApplicationCannotActivate() async {
         var postCount = 0
         let target = PasteAutomationController.TargetApplication(
             processIdentifier: 42_426,
@@ -582,7 +684,7 @@ final class PasteListTests: XCTestCase {
         )
         let controller = PasteAutomationController(
             permissionClient: PostEventPermissionClient(
-                isTrusted: { true },
+                preflight: { true },
                 request: { XCTFail("Permission request must be explicit"); return false }
             ),
             frontmostApplication: { target },
@@ -610,11 +712,11 @@ final class PasteListTests: XCTestCase {
         )
         XCTAssertEqual(
             PasteFallbackPanelController.permissionTitle,
-            "\(AppConfiguration.name) needs permission to paste into other apps."
+            "Assistive Paste needs permission to send ⌘V."
         )
     }
 
-    func testApplicationSourcesUseOnlyPublicAccessibilityAndPostEventAPIs() throws {
+    func testApplicationSourcesUsePublicAccessibilityPermissionAPIs() throws {
         let testsURL = URL(fileURLWithPath: #filePath)
         let projectRoot = testsURL
             .deletingLastPathComponent()
@@ -644,9 +746,9 @@ final class PasteListTests: XCTestCase {
                 .appendingPathComponent("PasteAutomationController.swift"),
             encoding: .utf8
         )
-        XCTAssertTrue(automationSource.contains("AXIsProcessTrustedWithOptions"))
+        XCTAssertTrue(automationSource.contains("import ApplicationServices"))
+        XCTAssertTrue(automationSource.contains("AXIsProcessTrusted()"))
         XCTAssertTrue(automationSource.contains("CGRequestPostEventAccess"))
-        XCTAssertFalse(automationSource.contains("CGPreflightPostEventAccess"))
     }
 
     @MainActor
@@ -1102,6 +1204,76 @@ final class PasteListTests: XCTestCase {
 
 @MainActor
 final class LaunchAtLoginControllerTests: XCTestCase {
+    func testExternalResetCommandIgnoresNormalLaunch() {
+        let service = LaunchAtLoginServiceSpy(status: .enabled)
+
+        let result = LaunchAtLoginResetCommand.run(
+            arguments: ["/Applications/PasteList.app/Contents/MacOS/PasteList"],
+            service: service
+        )
+
+        XCTAssertEqual(result, .notRequested)
+        XCTAssertEqual(service.unregisterCallCount, 0)
+    }
+
+    func testExternalResetCommandUnregistersEnabledService() {
+        let service = LaunchAtLoginServiceSpy(status: .enabled)
+
+        let result = LaunchAtLoginResetCommand.run(
+            arguments: ["PasteList", LaunchAtLoginResetCommand.argument],
+            service: service
+        )
+
+        XCTAssertEqual(result, .succeeded)
+        XCTAssertEqual(service.unregisterCallCount, 1)
+        XCTAssertEqual(service.status, .notRegistered)
+    }
+
+    func testExternalResetCommandUnregistersServiceAwaitingApproval() {
+        let service = LaunchAtLoginServiceSpy(status: .requiresApproval)
+
+        let result = LaunchAtLoginResetCommand.run(
+            arguments: ["PasteList", LaunchAtLoginResetCommand.argument],
+            service: service
+        )
+
+        XCTAssertEqual(result, .succeeded)
+        XCTAssertEqual(service.unregisterCallCount, 1)
+    }
+
+    func testExternalResetCommandAcceptsAlreadyUnregisteredService() {
+        let service = LaunchAtLoginServiceSpy(status: .notRegistered)
+
+        let result = LaunchAtLoginResetCommand.run(
+            arguments: ["PasteList", LaunchAtLoginResetCommand.argument],
+            service: service
+        )
+
+        XCTAssertEqual(result, .succeeded)
+        XCTAssertEqual(service.unregisterCallCount, 0)
+    }
+
+    func testExternalResetCommandReportsUnregisterFailure() {
+        let expectedError = NSError(
+            domain: "LaunchAtLoginResetCommandTests",
+            code: 42,
+            userInfo: [NSLocalizedDescriptionKey: "reset denied"]
+        )
+        let service = LaunchAtLoginServiceSpy(
+            status: .enabled,
+            unregisterError: expectedError
+        )
+
+        let result = LaunchAtLoginResetCommand.run(
+            arguments: ["PasteList", LaunchAtLoginResetCommand.argument],
+            service: service
+        )
+
+        XCTAssertEqual(result, .failed("reset denied"))
+        XCTAssertEqual(service.unregisterCallCount, 1)
+        XCTAssertEqual(service.status, .enabled)
+    }
+
     func testInitialSetupDoesNotRegisterWithoutUserAction() throws {
         let defaults = try isolatedUserDefaults()
         let service = LaunchAtLoginServiceSpy(status: .notRegistered)
@@ -1160,11 +1332,16 @@ final class LaunchAtLoginControllerTests: XCTestCase {
 @MainActor
 private final class LaunchAtLoginServiceSpy: LaunchAtLoginServicing {
     var status: SMAppService.Status
+    private let unregisterError: Error?
     private(set) var registerCallCount = 0
     private(set) var unregisterCallCount = 0
 
-    init(status: SMAppService.Status) {
+    init(
+        status: SMAppService.Status,
+        unregisterError: Error? = nil
+    ) {
         self.status = status
+        self.unregisterError = unregisterError
     }
 
     func register() throws {
@@ -1174,6 +1351,9 @@ private final class LaunchAtLoginServiceSpy: LaunchAtLoginServicing {
 
     func unregister() throws {
         unregisterCallCount += 1
+        if let unregisterError {
+            throw unregisterError
+        }
         status = .notRegistered
     }
 }

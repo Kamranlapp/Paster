@@ -66,23 +66,19 @@ No build or runtime verification was run for this documentation-only review.
 
 ## Accessibility implementation update — 2026-08-20
 
-The original delivery probe above has now been replaced after comparing the
-installed Mac App Store build of Pastebot 3 and verifying its permission flow at
-runtime. Pastebot is sandboxed, requests PostEvent access from a user action,
-checks `AXIsProcessTrustedWithOptions`, and posts paste events through the HID
-event tap. It recognized Accessibility immediately after the toggle was enabled.
-
-PasteList now follows the same state path while retaining the requested
-first-launch permission step:
+The original delivery probe above was replaced with the dedicated public
+PostEvent preflight and request APIs. PasteList retains an explicit,
+first-launch Assistive Paste permission step:
 
 - Debug uses `com.kam.pastelist.debug`; Release remains `com.kam.pastelist`.
-- The first onboarding page explicitly requests Accessibility and polls the
+- The first onboarding page explicitly requests PostEvent access and polls the
   visible permission state once per second.
-- `CGPreflightPostEventAccess` and the mouse/scroll delivery probe are removed.
+- Authorization status uses `AXIsProcessTrusted`, matching the Accessibility
+  toggle shown by System Settings. The mouse/scroll delivery probe remains removed.
 - Missing permission returns a distinct result, keeps the clip copied, and shows
   a contextual permission panel. Focus/posting failures show the manual ⌘V
   fallback instead.
-- Automatic paste sends Command down, V down/up, and Command up at the HID tap.
+- Assistive Paste sends Command down, V down/up, and Command up at the HID tap.
 - Debug tests are hosted by `PasteDebug.app`, fixing the stale `TEST_HOST` path.
 - Debug reset operations use the runtime bundle identifier and cannot reset the
   installed Release/TestFlight app.

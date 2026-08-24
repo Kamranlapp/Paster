@@ -9,13 +9,13 @@ final class PasteFallbackPanelController {
     }
 
     static var permissionTitle: String {
-        "\(AppConfiguration.name) needs permission to paste into other apps."
+        "Assistive Paste needs permission to send ⌘V."
     }
     static var permissionMessage: String {
         "Enable \(AppConfiguration.name) in Privacy & Security → Accessibility."
     }
     static let manualTitle = "Copied — press ⌘V to paste"
-    static let manualMessage = "Automatic paste could not reach the previous app."
+    static let manualMessage = "Assistive Paste could not reach the previous app."
 
     private static let permissionPanelSize = NSSize(width: 520, height: 170)
     private static let manualPanelSize = NSSize(width: 500, height: 96)
@@ -24,6 +24,8 @@ final class PasteFallbackPanelController {
     private let pasteAutomationController: PasteAutomationController
     private var dismissalTask: Task<Void, Never>?
     private var presentation: Presentation?
+    private var localMouseMonitor: Any?
+    private var globalMouseMonitor: Any?
 
     init(pasteAutomationController: PasteAutomationController) {
         self.pasteAutomationController = pasteAutomationController
@@ -94,7 +96,9 @@ final class PasteFallbackPanelController {
         panel.alphaValue = 1
         panel.orderFrontRegardless()
 
-        if presentation == .manualPaste {
+        if presentation == .permissionRequired {
+            startOutsideClickMonitoring()
+        } else {
             dismissalTask = Task { [weak self] in
                 try? await Task.sleep(nanoseconds: 2_500_000_000)
                 guard !Task.isCancelled else {
@@ -105,8 +109,48 @@ final class PasteFallbackPanelController {
         }
     }
 
+    private func startOutsideClickMonitoring() {
+        stopOutsideClickMonitoring()
+        let mouseDownEvents: NSEvent.EventTypeMask = [
+            .leftMouseDown,
+            .rightMouseDown,
+            .otherMouseDown,
+        ]
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: mouseDownEvents) {
+            [weak self] event in
+            self?.hideIfClickIsOutsidePanel(at: NSEvent.mouseLocation)
+            return event
+        }
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: mouseDownEvents) {
+            [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.hideIfClickIsOutsidePanel(at: NSEvent.mouseLocation)
+            }
+        }
+    }
+
+    private func hideIfClickIsOutsidePanel(at location: NSPoint) {
+        guard presentation == .permissionRequired,
+              !panel.frame.contains(location) else {
+            return
+        }
+        hide()
+    }
+
+    private func stopOutsideClickMonitoring() {
+        if let localMouseMonitor {
+            NSEvent.removeMonitor(localMouseMonitor)
+            self.localMouseMonitor = nil
+        }
+        if let globalMouseMonitor {
+            NSEvent.removeMonitor(globalMouseMonitor)
+            self.globalMouseMonitor = nil
+        }
+    }
+
     private func hide() {
         dismissalTask?.cancel()
+        stopOutsideClickMonitoring()
         if presentation == .permissionRequired {
             pasteAutomationController.setAuthorizationSurface(
                 .permissionPrompt,
@@ -141,26 +185,21 @@ private struct PasteFallbackView: View {
 
                 if presentation == .permissionRequired {
                     HStack(spacing: 12) {
-                        Button(
-                            pasteAutomationController.isPostEventAuthorized
-                                ? "Done"
-                                : "Open System Settings"
-                        ) {
-                            if pasteAutomationController.isPostEventAuthorized {
-                                dismiss()
-                            } else {
+                        if pasteAutomationController.isPostEventAuthorized {
+                            Button("Done", action: dismiss)
+                        } else {
+                            Button("Open System Settings") {
                                 Task {
                                     await pasteAutomationController.requestAuthorization()
                                 }
                             }
-                        }
-                        .controlSize(.small)
-
-                        if pasteAutomationController.permissionRequestState == .requesting {
-                            ProgressView()
-                                .controlSize(.small)
+                            .disabled(
+                                pasteAutomationController.permissionRequestState == .requesting
+                            )
+                            Button("Close", action: dismiss)
                         }
                     }
+                    .controlSize(.small)
                     .padding(.top, 6)
                 }
             }
@@ -194,7 +233,7 @@ private struct PasteFallbackView: View {
         switch presentation {
         case .permissionRequired:
             return pasteAutomationController.isPostEventAuthorized
-                ? "Automatic paste permission granted"
+                ? "Assistive Paste permission granted"
                 : PasteFallbackPanelController.permissionTitle
         case .manualPaste:
             return PasteFallbackPanelController.manualTitle
@@ -205,7 +244,7 @@ private struct PasteFallbackView: View {
         switch presentation {
         case .permissionRequired:
             return pasteAutomationController.isPostEventAuthorized
-                ? "The next selected clip will paste automatically."
+                ? "The next selected clip can be pasted using only your pointing device."
                 : PasteFallbackPanelController.permissionMessage
         case .manualPaste:
             return PasteFallbackPanelController.manualMessage

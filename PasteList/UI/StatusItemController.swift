@@ -509,7 +509,7 @@ final class StatusItemController: NSObject {
 
     private func didRestoreClip() {
         let shouldRequestReview = appReviewRequestController.recordSuccessfulPaste()
-        closeCursorPanel()
+        dismissCursorPanelForPaste()
         Task { [weak self] in
             guard let self else {
                 return
@@ -529,6 +529,21 @@ final class StatusItemController: NSObject {
                 )
             }
         }
+    }
+
+    /// Automatic paste must not race the panel's fade-out animation. Keeping a
+    /// PasteList window visible (especially while pinned) can leave it as the key
+    /// window while the synthetic Command-V is posted.
+    private func dismissCursorPanelForPaste() {
+        removeGlobalDismissMonitor()
+        imagePreviewPanel.hide()
+        savedClipsPanel.hide()
+        setCursorPanelResizeMode(false)
+        cursorPanelFadeGeneration += 1
+        cursorPanel.orderOut(nil)
+        cursorPanel.alphaValue = 1
+        isCursorPanelFadingOut = false
+        selectionResetController.reset()
     }
 
     private func quickPasteHistoryEntry(at index: Int) {
